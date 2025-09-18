@@ -256,7 +256,7 @@ pub fn gossip_actor_handle(
 
     StartGossip -> {
       case state {
-        GossipState(actor, all_actors, actor_subjects, threshold, converged) -> {
+        GossipState(actor, _all_actors, actor_subjects, _threshold, converged) -> {
           case !converged {
             True -> {
               // Pick a random neighbor and send rumor
@@ -288,7 +288,7 @@ pub fn gossip_actor_handle(
 
     StopGossip -> {
       case state {
-        GossipState(actor, all_actors, actor_subjects, threshold, converged) -> {
+        GossipState(actor, all_actors, actor_subjects, threshold, _converged) -> {
           actor.continue(GossipState(
             actor,
             all_actors,
@@ -302,14 +302,20 @@ pub fn gossip_actor_handle(
 
     RequestSum -> {
       case state {
-        GossipState(actor, all_actors, actor_subjects, threshold, converged) -> {
+        GossipState(
+          _actor,
+          _all_actors,
+          _actor_subjects,
+          _threshold,
+          _converged,
+        ) -> {
           // This would be used for collecting final statistics
           actor.continue(state)
         }
       }
     }
 
-    SumResponse(sum, count) -> {
+    SumResponse(_sum, _count) -> {
       // This would be used for collecting final statistics
       actor.continue(state)
     }
@@ -388,9 +394,9 @@ fn start_gossip_actors(
 
 // Run the gossip simulation
 fn run_simulation(
-  actors: List(Actor),
+  _actors: List(Actor),
   actor_subjects: List(process.Subject(GossipMessage)),
-  convergence_threshold: Int,
+  _convergence_threshold: Int,
 ) -> Nil {
   // Start the gossip by sending StartGossip to all actors
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
