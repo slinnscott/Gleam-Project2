@@ -1,9 +1,12 @@
 import argv
 import gleam/erlang/process
+import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
 import gleam/otp/actor
+import gleam/time/duration
+import gleam/time/timestamp
 
 pub type Actor {
   Actor(
@@ -301,14 +304,12 @@ pub fn gossip_actor_handler(
           _threshold,
           _converged,
         ) -> {
-          // This would be used for collecting final statistics
           actor.continue(state)
         }
       }
     }
 
     SumResponse(_sum, _count) -> {
-      // This would be used for collecting final statistics
       actor.continue(state)
     }
   }
@@ -323,7 +324,6 @@ pub fn pushsum_actor_handler(
     PushSum(sum, weight) -> {
       case state {
         PushSumState(actor, all_actors, actor_subjects, threshold, converged) -> {
-          // Update actor with new sum and weight
           let new_s = actor.s +. sum
           let new_w = actor.w +. weight
 
@@ -363,7 +363,6 @@ pub fn pushsum_actor_handler(
 
           case is_converged && !converged {
             True -> {
-              // Send stop message to all actors
               list.each(actor_subjects, fn(subject) {
                 process.send(subject, StopPushSum)
               })
@@ -400,7 +399,6 @@ pub fn pushsum_actor_handler(
                           let half_sum = actor.s /. 2.0
                           let half_weight = actor.w /. 2.0
 
-                          // Update our own values (keep half)
                           let updated_actor =
                             Actor(
                               actor.id,
@@ -495,7 +493,6 @@ fn create_actors(
   }
 }
 
-// Start all gossip actors
 fn start_gossip_actors(
   actors: List(Actor),
   convergence_threshold: Int,
@@ -504,21 +501,13 @@ fn start_gossip_actors(
   let actor_results =
     list.map(actors, fn(actor) {
       let initial_state =
-        GossipState(
-          actor,
-          actors,
-          [],
-          // Will be filled after all actors are created
-          convergence_threshold,
-          False,
-        )
+        GossipState(actor, actors, [], convergence_threshold, False)
 
       actor.new(initial_state)
       |> actor.on_message(gossip_actor_handler)
       |> actor.start
     })
 
-  // Extract subjects from successful starts
   let actor_subjects =
     list.filter_map(actor_results, fn(result) {
       case result {
@@ -530,7 +519,6 @@ fn start_gossip_actors(
   Ok(actor_subjects)
 }
 
-// Start all Push Sum actors
 fn start_pushsum_actors(
   actors: List(Actor),
   convergence_threshold: Int,
@@ -539,21 +527,13 @@ fn start_pushsum_actors(
   let actor_results =
     list.map(actors, fn(actor) {
       let initial_state =
-        PushSumState(
-          actor,
-          actors,
-          [],
-          // Will be filled after all actors are created
-          convergence_threshold,
-          False,
-        )
+        PushSumState(actor, actors, [], convergence_threshold, False)
 
       actor.new(initial_state)
       |> actor.on_message(pushsum_actor_handler)
       |> actor.start
     })
 
-  // Extract subjects from successful starts
   let actor_subjects =
     list.filter_map(actor_results, fn(result) {
       case result {
@@ -565,45 +545,41 @@ fn start_pushsum_actors(
   Ok(actor_subjects)
 }
 
-// Run the gossip simulation
-fn run_simulation(
+fn run_gossip_simulation(
   _actors: List(Actor),
   actor_subjects: List(process.Subject(GossipMessage)),
   _convergence_threshold: Int,
 ) -> Nil {
-  // Start the gossip by sending StartGossip to all actors
+  let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
-
-  // Wait for convergence (simplified - in practice you'd use proper synchronization)
-  // For now, we'll just wait a bit and then stop
-  process.sleep(1000)
-  // 1 second
-
-  // Send stop to all actors
+  process.sleep(list.length(actor_subjects) * 10)
   list.each(actor_subjects, fn(subject) { process.send(subject, StopGossip) })
-
-  // Print results
+  let end_time = timestamp.system_time()
+  let duration = timestamp.difference(start_time, end_time)
+  io.println(
+    "Total time taken: "
+    <> float.to_string(duration.to_seconds(duration))
+    <> " seconds",
+  )
   io.println("Gossip simulation completed")
 }
 
-// Run the Push Sum simulation
 fn run_pushsum_simulation(
   _actors: List(Actor),
   actor_subjects: List(process.Subject(PushSumMessage)),
   _convergence_threshold: Int,
 ) -> Nil {
-  // Start the Push Sum by sending StartPushSum to all actors
+  let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartPushSum) })
-
-  // Wait for convergence (simplified - in practice you'd use proper synchronization)
-  // For now, we'll just wait a bit and then stop
-  process.sleep(1000)
-  // 1 second
-
-  // Send stop to all actors
+  process.sleep(list.length(actor_subjects) * 10)
   list.each(actor_subjects, fn(subject) { process.send(subject, StopPushSum) })
-
-  // Print results
+  let end_time = timestamp.system_time()
+  let duration = timestamp.difference(start_time, end_time)
+  io.println(
+    "Total time taken: "
+    <> float.to_string(duration.to_seconds(duration))
+    <> " seconds",
+  )
   io.println("Push Sum simulation completed")
 }
 
@@ -625,12 +601,12 @@ pub fn main() -> Nil {
                   io.println("Number of nodes: " <> int.to_string(num_nodes))
                   io.println("Topology: " <> topology)
                   io.println("Algorithm: " <> algorithm)
-                  io.println(
-                    "Convergence threshold: "
-                    <> int.to_string(convergence_threshold),
-                  )
 
-                  run_simulation(actors, actor_subjects, convergence_threshold)
+                  run_gossip_simulation(
+                    actors,
+                    actor_subjects,
+                    convergence_threshold,
+                  )
                 }
                 Error(msg) ->
                   io.println("Error starting gossip actors: " <> msg)
@@ -643,10 +619,6 @@ pub fn main() -> Nil {
                   io.println("Number of nodes: " <> int.to_string(num_nodes))
                   io.println("Topology: " <> topology)
                   io.println("Algorithm: " <> algorithm)
-                  io.println(
-                    "Convergence threshold: "
-                    <> int.to_string(convergence_threshold),
-                  )
 
                   run_pushsum_simulation(
                     actors,
