@@ -646,7 +646,7 @@ fn run_gossip_simulation(
 ) -> Nil {
   let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
-  list.each(actor_subjects, fn(_) { process.receive_forever(main_reply) })
+  list.(actor_subjects, fn(_) { process.receive_forever(main_reply) })
   let end_time = timestamp.system_time()
   let duration = timestamp.difference(start_time, end_time)
   io.println(
