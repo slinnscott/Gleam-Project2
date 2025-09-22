@@ -16,6 +16,7 @@ pub type Actor {
     s: Float,
     w: Float,
     stable_rounds: Int,
+    parent: process.Pid,
   )
 }
 
@@ -94,8 +95,9 @@ pub fn build_3d(num_nodes: Int) -> List(Actor) {
 
     // Remove any neighbors that exceed the requested node count -> Cube may be larger than total number of nodes
     let neighbors = list.filter(neighbors, fn(n) { n < num_nodes })
-
-    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0)
+    let main_receiver = process.
+    let parent_pid = process.self()
+    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0, parent_pid)
   })
 }
 
@@ -115,13 +117,12 @@ fn pick_extra_neighbor(id: Int, num_nodes: Int) -> Int {
 // Build imperfect 3D = Build 3D + one extra neighbor
 pub fn build_imperfect_3d(num_nodes: Int) -> List(Actor) {
   let base = build_3d(num_nodes)
-
   list.map(base, fn(actor) {
     case actor {
-      Actor(id, neighbors, rumor_count, s, w, stable_rounds) -> {
+      Actor(id, neighbors, rumor_count, s, w, stable_rounds, parent_pid) -> {
         let extra = pick_extra_neighbor(id, num_nodes)
         let new_neighbors = [extra, ..neighbors]
-        Actor(id, new_neighbors, rumor_count, s, w, stable_rounds)
+        Actor(id, new_neighbors, rumor_count, s, w, stable_rounds, parent_pid)
       }
     }
   })
@@ -130,9 +131,10 @@ pub fn build_imperfect_3d(num_nodes: Int) -> List(Actor) {
 // Build full network = every node is connected to every other node
 pub fn build_full_network(num_nodes: Int) -> List(Actor) {
   let ids = list.range(0, num_nodes - 1)
+  let parent_pid = process.self()
   list.map(ids, fn(id) {
     let neighbors = list.filter(ids, fn(n) { n != id })
-    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0)
+    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0, parent_pid)
   })
 }
 
@@ -153,7 +155,7 @@ pub fn build_line(num_nodes: Int) -> List(Actor) {
       False -> neighbors
     }
 
-    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0)
+    Actor(id, neighbors, 0, int.to_float(id), 1.0, 0, process.self())
   })
 }
 
@@ -200,8 +202,6 @@ pub fn gossip_actor_handler(
       case state {
         GossipState(actor, all_actors, actor_subjects, threshold, converged) -> {
           // Update actor with new rumor
-          let sum = actor.s +. rumor_value
-          let new_s = sum /. 2.0
           let new_stable_rounds = case actor.s == rumor_value {
             True -> actor.stable_rounds + 1
             False -> 0
@@ -212,9 +212,10 @@ pub fn gossip_actor_handler(
               actor.id,
               actor.neighbors,
               actor.rumor_count + 1,
-              new_s,
-              actor.w +. 1.0,
+              actor.s,
+              actor.w,
               new_stable_rounds,
+              actor.parent,
             )
 
           let new_state =
@@ -275,7 +276,10 @@ pub fn gossip_actor_handler(
                 }
               }
             }
-            False -> actor.continue(state)
+            False -> {
+              process.send(actor.parent, StopGossip)
+              actor.continue(state)
+            }
           }
         }
       }
@@ -347,6 +351,7 @@ pub fn pushsum_actor_handler(
               new_s,
               new_w,
               new_stable_rounds,
+              actor.parent,
             )
 
           let new_state =
@@ -407,6 +412,7 @@ pub fn pushsum_actor_handler(
                               half_sum,
                               half_weight,
                               actor.stable_rounds,
+                              actor.parent,
                             )
 
                           process.send(
@@ -552,8 +558,14 @@ fn run_gossip_simulation(
 ) -> Nil {
   let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
-  process.sleep(list.length(actor_subjects) * 10)
-  list.each(actor_subjects, fn(subject) { process.send(subject, StopGossip) })
+  let first = list.first(actor_subjects)
+  case first {
+    Ok(subject) -> {
+      process.receive_forever(subject)
+      io.println("Gossip simulation finished")
+    }
+    Error(_) -> Nil
+  }
   let end_time = timestamp.system_time()
   let duration = timestamp.difference(start_time, end_time)
   io.println(
@@ -571,8 +583,15 @@ fn run_pushsum_simulation(
 ) -> Nil {
   let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartPushSum) })
-  process.sleep(list.length(actor_subjects) * 10)
-  list.each(actor_subjects, fn(subject) { process.send(subject, StopPushSum) })
+
+  let first = list.first(actor_subjects)
+  case first {
+    Ok(subject) -> {
+      process.receive_forever(subject)
+      io.println("Push Sum simulation finished")
+    }
+    Error(_) -> Nil
+  }
   let end_time = timestamp.system_time()
   let duration = timestamp.difference(start_time, end_time)
   io.println(
