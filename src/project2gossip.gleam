@@ -7,6 +7,8 @@ import gleam/list
 import gleam/otp/actor
 import gleam/time/duration
 import gleam/time/timestamp
+import prng/random
+import prng/seed
 
 pub type Actor {
   Actor(
@@ -95,7 +97,6 @@ pub fn build_3d(
       }
       False -> neighbors
     }
-
     // Remove any neighbors that exceed the requested node count -> Cube may be larger than total number of nodes
     let neighbors = list.filter(neighbors, fn(n) { n < num_nodes })
     Actor(id, neighbors, 0, int.to_float(id), 1.0, 0, main_reply)
@@ -103,8 +104,9 @@ pub fn build_3d(
 }
 
 fn pick_extra_neighbor(id: Int, num_nodes: Int) -> Int {
-  let seed = id * 1_664_525 + 1_013_904_223
-  let assert Ok(r0) = int.modulo(seed, by: num_nodes)
+  let generator = random.int(0, num_nodes - 1)
+  let assert Ok(r0) =
+    int.modulo(random.sample(generator, seed.random()), by: num_nodes)
   // If we somehow get the ourselves as an extra neighbor, we pick the next one
   case r0 == id {
     True -> {
@@ -173,12 +175,14 @@ pub type GossipMessage {
   SumResponse(sum: Float, count: Int)
   StartGossip
   StopGossip
+  GossipSetSubjects(subjects: List(process.Subject(GossipMessage)))
 }
 
 pub type PushSumMessage {
   PushSum(sum: Float, weight: Float)
   StartPushSum
   StopPushSum
+  PushSumSetSubjects(subjects: List(process.Subject(PushSumMessage)))
 }
 
 pub type GossipState {
@@ -206,21 +210,37 @@ pub fn gossip_actor_handler(
   message: GossipMessage,
 ) -> actor.Next(GossipState, GossipMessage) {
   case message {
+    GossipSetSubjects(subjects) -> {
+      case state {
+        GossipState(actor, all_actors, _actor_subjects, threshold, converged) -> {
+          actor.continue(GossipState(
+            actor,
+            all_actors,
+            subjects,
+            threshold,
+            converged,
+          ))
+        }
+      }
+    }
     Rumor(rumor_value) -> {
       case state {
         GossipState(actor, all_actors, actor_subjects, threshold, converged) -> {
-          // Update actor with new rumor
+          // Update actor with new rumor - store the rumor value, not the actor's ID
           let new_stable_rounds = case actor.s == rumor_value {
             True -> actor.stable_rounds + 1
             False -> 0
           }
+
+          // Debug removed
 
           let updated_actor =
             Actor(
               actor.id,
               actor.neighbors,
               actor.rumor_count + 1,
-              actor.s,
+              rumor_value,
+              // Store the rumor value, not the actor's ID
               actor.w,
               new_stable_rounds,
               actor.main_reply,
@@ -240,9 +260,9 @@ pub fn gossip_actor_handler(
           case is_converged && !converged {
             True -> {
               // Send stop message to all actors
-              list.each(actor_subjects, fn(subject) {
-                process.send(subject, StopGossip)
-              })
+
+              // Notify main that convergence was reached
+              process.send(actor.main_reply, [0])
 
               actor.continue(GossipState(
                 updated_actor,
@@ -267,13 +287,30 @@ pub fn gossip_actor_handler(
               case list.length(actor.neighbors) {
                 0 -> actor.continue(state)
                 _ -> {
-                  let neighbor_index = actor.id % list.length(actor.neighbors)
-
+                  let neighbor_index =
+                    random.sample(
+                      random.int(0, list.length(actor.neighbors) - 1),
+                      seed.random(),
+                    )
                   case list.drop(actor.neighbors, neighbor_index) {
                     [neighbor_id, ..] -> {
                       case list.drop(actor_subjects, neighbor_id) {
                         [neighbor_subject, ..] -> {
+                          // Debug removed
                           process.send(neighbor_subject, Rumor(actor.s))
+                          // Schedule next gossip round
+                          case list.drop(actor_subjects, actor.id) {
+                            [self_subject, ..] -> {
+                              let _timer =
+                                process.send_after(
+                                  self_subject,
+                                  10,
+                                  StartGossip,
+                                )
+                              Nil
+                            }
+                            [] -> Nil
+                          }
                           actor.continue(state)
                         }
                         [] -> actor.continue(state)
@@ -333,6 +370,19 @@ pub fn pushsum_actor_handler(
   message: PushSumMessage,
 ) -> actor.Next(PushSumState, PushSumMessage) {
   case message {
+    PushSumSetSubjects(subjects) -> {
+      case state {
+        PushSumState(actor, all_actors, _actor_subjects, threshold, converged) -> {
+          actor.continue(PushSumState(
+            actor,
+            all_actors,
+            subjects,
+            threshold,
+            converged,
+          ))
+        }
+      }
+    }
     PushSum(sum, weight) -> {
       case state {
         PushSumState(actor, all_actors, actor_subjects, threshold, converged) -> {
@@ -344,7 +394,7 @@ pub fn pushsum_actor_handler(
           let new_ratio = new_s /. new_w
           let ratio_change = old_ratio -. new_ratio
           let is_stable =
-            ratio_change <. 0.0000001 && ratio_change >. -0.0000001
+            ratio_change <. 0.0000000001 && ratio_change >. -0.0000000001
 
           let new_stable_rounds = case is_stable {
             True -> actor.stable_rounds + 1
@@ -376,9 +426,9 @@ pub fn pushsum_actor_handler(
 
           case is_converged && !converged {
             True -> {
-              list.each(actor_subjects, fn(subject) {
-                process.send(subject, StopPushSum)
-              })
+              // Notify main that convergence was reached
+              // Debug removed
+              process.send(actor.main_reply, [])
 
               actor.continue(PushSumState(
                 updated_actor,
@@ -403,7 +453,11 @@ pub fn pushsum_actor_handler(
               case list.length(actor.neighbors) {
                 0 -> actor.continue(state)
                 _ -> {
-                  let neighbor_index = actor.id % list.length(actor.neighbors)
+                  let neighbor_index =
+                    random.sample(
+                      random.int(0, list.length(actor.neighbors) - 1),
+                      seed.random(),
+                    )
 
                   case list.drop(actor.neighbors, neighbor_index) {
                     [neighbor_id, ..] -> {
@@ -423,10 +477,24 @@ pub fn pushsum_actor_handler(
                               actor.main_reply,
                             )
 
+                          // Debug removed
                           process.send(
                             neighbor_subject,
                             PushSum(half_sum, half_weight),
                           )
+                          // Schedule next push-sum round
+                          case list.drop(actor_subjects, actor.id) {
+                            [self_subject, ..] -> {
+                              let _timer =
+                                process.send_after(
+                                  self_subject,
+                                  10,
+                                  StartPushSum,
+                                )
+                              Nil
+                            }
+                            [] -> Nil
+                          }
                           actor.continue(PushSumState(
                             updated_actor,
                             all_actors,
@@ -531,6 +599,11 @@ fn start_gossip_actors(
       }
     })
 
+  // Broadcast subjects to all actors so they can send to neighbors
+  list.each(actor_subjects, fn(subject) {
+    process.send(subject, GossipSetSubjects(actor_subjects))
+  })
+
   Ok(actor_subjects)
 }
 
@@ -557,6 +630,11 @@ fn start_pushsum_actors(
       }
     })
 
+  // Broadcast subjects to all actors so they can send to neighbors
+  list.each(actor_subjects, fn(subject) {
+    process.send(subject, PushSumSetSubjects(actor_subjects))
+  })
+
   Ok(actor_subjects)
 }
 
@@ -568,7 +646,7 @@ fn run_gossip_simulation(
 ) -> Nil {
   let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
-  process.receive_forever(main_reply)
+  list.(actor_subjects, fn(_) { process.receive_forever(main_reply) })
   let end_time = timestamp.system_time()
   let duration = timestamp.difference(start_time, end_time)
   io.println(
@@ -607,7 +685,7 @@ pub fn main() -> Nil {
       let main_reply = process.new_subject()
       case create_actors(num_nodes, topology, main_reply) {
         Ok(actors) -> {
-          let convergence_threshold = 10
+          let convergence_threshold = 3
 
           case algorithm {
             "gossip" -> {
