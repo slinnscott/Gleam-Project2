@@ -7,6 +7,8 @@ import gleam/list
 import gleam/otp/actor
 import gleam/time/duration
 import gleam/time/timestamp
+import prng/random
+import prng/seed
 
 pub type Actor {
   Actor(
@@ -95,7 +97,6 @@ pub fn build_3d(
       }
       False -> neighbors
     }
-
     // Remove any neighbors that exceed the requested node count -> Cube may be larger than total number of nodes
     let neighbors = list.filter(neighbors, fn(n) { n < num_nodes })
     Actor(id, neighbors, 0, int.to_float(id), 1.0, 0, main_reply)
@@ -103,8 +104,9 @@ pub fn build_3d(
 }
 
 fn pick_extra_neighbor(id: Int, num_nodes: Int) -> Int {
-  let seed = id * 1_664_525 + 1_013_904_223
-  let assert Ok(r0) = int.modulo(seed, by: num_nodes)
+  let generator = random.int(0, num_nodes - 1)
+  let assert Ok(r0) =
+    int.modulo(random.sample(generator, seed.random()), by: num_nodes)
   // If we somehow get the ourselves as an extra neighbor, we pick the next one
   case r0 == id {
     True -> {
@@ -257,14 +259,13 @@ pub fn gossip_actor_handler(
 
           case is_converged && !converged {
             True -> {
-              // Debug removed
               // Send stop message to all actors
               list.each(actor_subjects, fn(subject) {
                 process.send(subject, StopGossip)
               })
 
               // Notify main that convergence was reached
-              process.send(actor.main_reply, [])
+              process.send(actor.main_reply, [0])
 
               actor.continue(GossipState(
                 updated_actor,
@@ -289,8 +290,11 @@ pub fn gossip_actor_handler(
               case list.length(actor.neighbors) {
                 0 -> actor.continue(state)
                 _ -> {
-                  let neighbor_index = actor.id % list.length(actor.neighbors)
-
+                  let neighbor_index =
+                    random.sample(
+                      random.int(0, list.length(actor.neighbors) - 1),
+                      seed.random(),
+                    )
                   case list.drop(actor.neighbors, neighbor_index) {
                     [neighbor_id, ..] -> {
                       case list.drop(actor_subjects, neighbor_id) {
@@ -456,7 +460,11 @@ pub fn pushsum_actor_handler(
               case list.length(actor.neighbors) {
                 0 -> actor.continue(state)
                 _ -> {
-                  let neighbor_index = actor.id % list.length(actor.neighbors)
+                  let neighbor_index =
+                    random.sample(
+                      random.int(0, list.length(actor.neighbors) - 1),
+                      seed.random(),
+                    )
 
                   case list.drop(actor.neighbors, neighbor_index) {
                     [neighbor_id, ..] -> {
@@ -645,7 +653,7 @@ fn run_gossip_simulation(
 ) -> Nil {
   let start_time = timestamp.system_time()
   list.each(actor_subjects, fn(subject) { process.send(subject, StartGossip) })
-  process.receive_forever(main_reply)
+  list.each(actor_subjects, fn(_) { process.receive_forever(main_reply) })
   let end_time = timestamp.system_time()
   let duration = timestamp.difference(start_time, end_time)
   io.println(
