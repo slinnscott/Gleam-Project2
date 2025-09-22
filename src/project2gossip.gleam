@@ -260,9 +260,6 @@ pub fn gossip_actor_handler(
           case is_converged && !converged {
             True -> {
               // Send stop message to all actors
-              list.each(actor_subjects, fn(subject) {
-                process.send(subject, StopGossip)
-              })
 
               // Notify main that convergence was reached
               process.send(actor.main_reply, [0])
@@ -397,7 +394,7 @@ pub fn pushsum_actor_handler(
           let new_ratio = new_s /. new_w
           let ratio_change = old_ratio -. new_ratio
           let is_stable =
-            ratio_change <. 0.0000001 && ratio_change >. -0.0000001
+            ratio_change <. 0.0000000001 && ratio_change >. -0.0000000001
 
           let new_stable_rounds = case is_stable {
             True -> actor.stable_rounds + 1
@@ -429,10 +426,6 @@ pub fn pushsum_actor_handler(
 
           case is_converged && !converged {
             True -> {
-              list.each(actor_subjects, fn(subject) {
-                process.send(subject, StopPushSum)
-              })
-
               // Notify main that convergence was reached
               // Debug removed
               process.send(actor.main_reply, [])
