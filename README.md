@@ -24,7 +24,6 @@ Full:
   * Gossip: 10000
   * Push-Sum: 10000
 ![alt text](image-2.png)
-
 Imperfect 3d:
   * Gossip: 10000
   * Push-Sum: 12500
