@@ -5,12 +5,8 @@ Scott Slinn & Nick Costagliola
 ## What is Working
 Examples: 
 ![alt text](image-4.png)
-
-![alt text](image-5.png)
-
-
-![alt text](image-6.png)
-
+ ![alt text](image-5.png) 
+ ![alt text](image-6.png)
 
 We believe that we have all four topologies and both algorithms working for each topology. Some of the timing was very inconsistent between computers as well as the size of the nodes causing imbalances based on memory available to be allocated to the program.
 
